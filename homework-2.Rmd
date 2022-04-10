@@ -1,0 +1,209 @@
+---
+title: "Homework 2"
+author: "Aidan Baker"
+output:
+  html_document:
+    code_folding: show
+    toc: yes
+    toc_float: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE,
+                      warning = FALSE, error = TRUE)
+```
+
+## Linear Regression
+
+For this lab, we will be working with a data set from the UCI (University of California, Irvine) Machine Learning repository ([see website here](http://archive.ics.uci.edu/ml/datasets/Abalone)). The full data set consists of $4,177$ observations of abalone in Tasmania. (Fun fact: [Tasmania](https://en.wikipedia.org/wiki/Tasmania "Tasmania") supplies about $25\%$ of the yearly world abalone harvest.)
+
+![*Fig 1. Inside of an abalone shell.*](https://cdn.shopify.com/s/files/1/1198/8002/products/1d89434927bffb6fd1786c19c2d921fb_2000x_652a2391-5a0a-4f10-966c-f759dc08635c_1024x1024.jpg?v=1582320404){width="152"}
+
+The age of an abalone is typically determined by cutting the shell open and counting the number of rings with a microscope. The purpose of this data set is to determine whether abalone age (**number of rings + 1.5**) can be accurately predicted using other, easier-to-obtain information about the abalone.
+
+The full abalone data set is located in the `\data` subdirectory. Read it into *R* using `read_csv()`. Take a moment to read through the codebook (`abalone_codebook.txt`) and familiarize yourself with the variable definitions.
+
+Make sure you load the `tidyverse` and `tidymodels`!
+
+```{r}
+library(tidyverse)
+library(tidymodels)
+library(ggplot2)
+library(ggthemes)
+library(yardstick)
+library(dplyr)
+abalone <- read.csv("/Users/aidanbaker/homework1-131/abalone.csv")
+```
+
+
+
+### Question 1
+
+Your goal is to predict abalone age, which is calculated as the number of rings plus 1.5. Notice there currently is no `age` variable in the data set. Add `age` to the data set.
+
+```{r}
+
+abalone$age <- abalone$rings + 1.5
+
+ggplot(abalone, (aes(x= age))) + geom_histogram()
+
+```
+
+
+Assess and describe the distribution of `age`.
+
+We see that the distribution of the age column appears to be relatively normally distributed, there is a slight tail on the right side.
+
+### Question 2
+
+Split the abalone data into a training set and a testing set. Use stratified sampling. You should decide on appropriate percentages for splitting the data.
+
+```{r}
+
+set.seed(2001)
+
+abalone_split <- initial_split(abalone, prop = 0.80,
+                                strata = age)
+abalone_training <- training(abalone_split)
+abalone_testing <- testing(abalone_split)
+
+
+```
+
+
+
+
+
+
+### Question 3
+
+Using the **training** data, create a recipe predicting the outcome variable, `age`, with all other predictor variables. Note that you should not include `rings` to predict `age`. Explain why you shouldn't use `rings` to predict `age`.
+
+Steps for your recipe:
+
+1.  dummy code any categorical predictors
+
+2.  create interactions between
+
+    -   `type` and `shucked_weight`,
+    -   `longest_shell` and `diameter`,
+    -   `shucked_weight` and `shell_weight`
+
+3.  center all predictors, and
+
+4.  scale all predictors.
+
+You'll need to investigate the `tidymodels` documentation to find the appropriate step functions to use.
+
+
+```{r}
+
+abalonerecipe <- recipe(age ~ type + longest_shell + diameter + height + whole_weight + shucked_weight + viscera_weight + shell_weight, data = abalone_training) %>% 
+  step_dummy(all_nominal_predictors()) %>% 
+  step_center(all_numeric_predictors()) %>%
+  step_scale((all_numeric_predictors()))
+
+interaction1 <- step_interact(abalonerecipe, terms = ~ type:shucked_weight)
+interaction1 <- prep(interaction1, training = abalone_training)
+interaction2 <- step_interact(abalonerecipe, terms = ~ longest_shell:diameter)
+interaction2 <- prep(interaction2, training = abalone_training)
+interaction3 <- step_interact(abalonerecipe, terms = ~ shucked_weight:shell_weight)
+interaction3 <- prep(interaction3, training = abalone_training)
+
+
+
+```
+
+Number of rings should not be included in the model as it is directly correlated with age (number of rings + 1.5).  This could skew the results of our model so we leave it out.
+
+
+
+### Question 4
+
+Create and store a linear regression object using the `"lm"` engine.
+
+
+```{r}
+
+model <- linear_reg() %>% 
+  set_engine("lm")
+
+```
+
+
+### Question 5
+
+Now:
+
+1.  set up an empty workflow,
+2.  add the model you created in Question 4, and
+3.  add the recipe that you created in Question 3.
+
+```{r}
+
+workflow <- workflow() %>% 
+  add_model(model) %>% 
+  add_recipe(abalonerecipe)
+
+```
+
+
+
+
+
+### Question 6
+
+Use your `fit()` object to predict the age of a hypothetical female abalone with longest_shell = 0.50, diameter = 0.10, height = 0.30, whole_weight = 4, shucked_weight = 1, viscera_weight = 2, shell_weight = 1.
+
+
+```{r}
+
+fit <- fit(workflow, abalone_training)
+hypothetical_F <- data.frame(type = 'F', longest_shell = 0.50, diameter = 0.10, height = 0.30, whole_weight = 4, shucked_weight = 1, viscera_weight = 2, shell_weight = 1)
+
+prediction <- predict(fit,hypothetical_F)
+print(prediction)
+
+
+```
+
+We get a predicted age of about 12.5 years old.
+
+### Question 7
+
+Now you want to assess your model's performance. To do this, use the `yardstick` package:
+
+1.  Create a metric set that includes *R^2^*, RMSE (root mean squared error), and MAE (mean absolute error).
+2.  Use `predict()` and `bind_cols()` to create a tibble of your model's predicted values from the **training data** along with the actual observed ages (these are needed to assess your model's performance).
+3.  Finally, apply your metric set to the tibble, report the results, and interpret the *R^2^* value.
+
+```{r}
+
+
+age_prediction <- predict(fit,abalone_training)
+
+age_dataframe <- data.frame(abalone_training$age, age_prediction)
+colnames(age_dataframe) <-  c("truth","estimate")
+
+R2 <- rsq(age_dataframe,truth,estimate)
+
+RMSE <- rmse(age_dataframe,truth,estimate)
+
+MAE <- mae(age_dataframe,truth,estimate)
+
+data_results <- data.frame(R2$.estimate,RMSE$.estimate,MAE$.estimate)
+colnames(data_results) <- c("R^2","RMSE","MAE")
+
+print(data_results)
+
+
+```
+
+
+We see that we get an $R^2$ value of approximate .56. This essentially entails that only half of the variation is explained by the predictors we have. While an $R^2$ value of .56 is not great, there are multiple reasons for why this value could be low. In order to show that our data does not fit the response, we need to conduct more tests.
+
+
+
+
